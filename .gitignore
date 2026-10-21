@@ -1,0 +1,35 @@
+# dependencies and build output
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# local databases and runtime data (app data lives outside the repo)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+.local/
+
+# real transcripts and anything derived from them; only synthetic fixtures are allowed
+*.jsonl
+!tests/fixtures/synthetic/**/*.jsonl
+tests/fixtures/real/
+.claude/projects/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
