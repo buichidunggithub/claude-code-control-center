@@ -18,6 +18,8 @@ pnpm dev        # http://127.0.0.1:3210
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm ingest preview <absolute-path>   # see "Ingesting a transcript"
+pnpm config:scan --db <abs-db> --user-root <abs-dir> --project-root <abs-dir>   # see "Scanning configuration"
 ```
 
 The loopback test checks configuration (scripts and constants). It does not prove runtime network isolation.
@@ -61,6 +63,120 @@ depth is bounded.
 
 Schema history: v1 usage accounting, v2 configuration inventory, v3 adds `config_findings.rule_version`
 (additive, transactional). Files that are not valid UTF-8 are skipped with the code `INVALID_ENCODING`.
+
+## Ingesting a transcript (M7.1)
+
+Usage data enters the database only through one explicit, two-step command. It handles exactly one `.jsonl`
+file per run and never discovers anything.
+
+```
+pnpm ingest preview /absolute/path/to/session.jsonl
+pnpm ingest run --db /absolute/path/to/pilot/usage.db --token <token-from-preview> /absolute/path/to/session.jsonl
+```
+
+`pnpm ingest` compiles the command with the installed TypeScript compiler into `.cli-build/` (git-ignored; also
+`pnpm cli:build`) and runs it with plain Node. No dependency was added. Output is aggregate numbers and fixed
+error codes only.
+
+1. **`preview`** looks at metadata only (`lstat`): it never opens the file, creates nothing, and prints the
+   path (to your terminal only), size, timestamps, hard-link count, the read scope, the size limit, what would be
+   stored, and a **confirmation token**. It rejects: relative paths, `..`, `.`, `//`, a trailing `/`, wildcard
+   characters, control characters, anything not ending in `.jsonl`, directories and other non-regular files,
+   symlinks, any path with a symlink in it (give the real path; on macOS `/tmp` is really `/private/tmp`),
+   files over the limit, extra arguments and unknown options.
+2. **`run`** needs `--db` (absolute, no default and no environment fallback), the exact `--token`, and the path.
+   It revalidates everything, recomputes the token, opens the file with `O_NOFOLLOW` and checks the *opened
+   handle* against the previewed metadata, and only then creates or opens the database. It reads the file with
+   the existing reader, which is capped at the previewed size (so it stops at once if the file grows while it is
+   being read), checks again that the handle and the name still match (identity, size, timestamps) and that
+   the bytes read equal the previewed size, and only then runs the existing ingest (one transaction). The
+   parser and accounting are the existing ones, unchanged.
+
+**Failures.** Input rejected before any work (exit code 2): nothing was read and nothing was created. A failure
+after the database was opened (exit code 3: file changed during the read, database unusable, ingest rolled
+back) writes no usage records; the database file may exist and is never deleted or truncated. Every failure is a
+fixed code and hint (`REJECTED [TOKEN_MISMATCH] ...`) that never contains a path, input, file content or library
+message. Exit codes are always 0 (success), 2 (rejected) or 3 (failed). Once the ingest is committed it is
+reported as a success: if standard output is closed or fails at that point (for example `... | head`), the exit
+code is still 0 and standard error says `INGEST COMMITTED` (the records were written; only the summary could not
+be shown); there is no stack trace. A preview whose output cannot be written is `OUTPUT_FAILED` (exit 3,
+nothing created). An unexpected error during `run` says it is not known whether the database changed; it never
+claims that nothing was written.
+
+**Token.** SHA-256 over the exact path and the file's device, inode, size, modification time and status-change
+time (nanoseconds). It is a consistency check between preview and run, not authentication: anyone who can read
+the preview can compute it. It cannot see a change that leaves all of those values identical, and it does not
+cover content (the preview never reads content). Restoring the modification time after an edit does not hide the
+change, because the status-change time cannot be restored. It is not tied to a database, so it can be reused
+for the same unchanged file.
+
+**Size limit: 64 MiB per file, fixed.** The reader keeps every usage record in memory, so cost follows record
+count. Measured on synthetic worst-case files (tiny valid lines): 4 MiB 1.3 s / 205 MB, 16 MiB 5.2 s / 632 MB,
+64 MiB 26.8 s / 652 MB, 128 MiB 45.5 s / 723 MB peak. 64 MiB is about 20x the only real session observed
+(3.0 MiB). The limit is checked before reading, again on the opened handle, and **while streaming**: the reader
+is capped at the previewed size (which already passed the limit), so a file that grows during the read is
+abandoned after about one chunk instead of being read to its end. There is no override flag; a
+different limit is a code change that needs new evidence. Real file sizes are otherwise unknown, so this is a
+conservative assumption. The existing 4 MiB per-line cap still applies.
+
+**Database.** Explicit and absolute. An existing database is kept and added to (an older schema is migrated by
+opening it, even if the run is later aborted); it is never overwritten, truncated or deleted, and **its
+permissions are never changed** (the one exception: an existing empty file that is being initialized as a
+database is set to `0600`, because it will now hold data). A new one is created only after every check passed,
+with the existing modes (directory `0700`, file `0600`, also under a restrictive umask). Symlinked database
+paths or locations are rejected, and so is a database path that is another name (a hard link) for the
+transcript: device and inode are compared before anything is touched.
+
+**Stored:** a salted fingerprint of the path (the path itself is not stored), a content hash and size, and per
+usage record the model name only if it is a plain identifier, timestamp and UTC day, sidechain flag, the four
+counters with their raw state, and the accounting state, plus per-scan counts. **Not stored:** prompts,
+responses, tool arguments, file contents, paths, environment values, secrets.
+
+**Known limits.** Change detection is metadata-based. The existing reader opens the file by path, so a change
+between the handle check and the read is detected after the read, not prevented, and a swap that restores
+identical metadata is not detectable. A detected change aborts before any record is written. Case-only path
+differences on a case-insensitive filesystem are treated as a different path. Only one file per run; there is no
+directory, glob or discovery mode, no ingest from the dashboard (configuration has its own command, below).
+
+**Inspecting the result:** `CLAUDE_CONTROL_DB_PATH=/absolute/path/to/pilot/usage.db pnpm start`, then open
+`http://127.0.0.1:3210`. Token totals are the usage records found in the ingested transcript and accepted by the
+accounting pipeline; they may be incomplete (see "What the token totals mean" below).
+
+## Scanning configuration (M7.4)
+
+```
+pnpm config:scan --db /absolute/path/to/usage.db --user-root /absolute/path/to/claude-config-dir --project-root /absolute/path/to/project
+```
+
+(`pnpm config` is a built-in pnpm command, so the script is `config:scan`.) It runs the existing static scanner
+(`scanConfig`) on exactly the roots you name and saves the result with the existing persistence
+(`saveConfigInventory`); there is no second implementation. It never searches for roots.
+
+- **Explicit inputs:** `--db` and at least one of `--user-root` (your Claude config directory itself) or
+  `--project-root` (a project directory), each at most once. There is no default database, no environment fallback
+  and no discovery. Roots say what they are, so the scanner never guesses a layout.
+- **Scan everything in one command.** A complete scan replaces the database's current configuration snapshot, so
+  scanning the user root and a project root in two separate runs leaves only the second one current.
+- **Rejected before anything is created (exit 2):** relative, empty, over-long, wildcard, control-character or
+  non-normal paths (`..`, `.`, `//`, trailing `/`); a root that does not exist, is not a directory, is a symbolic
+  link or has a symbolic link in its path (stricter than the library, so the directory scanned is the one named);
+  both roots being the same directory; a database path that is invalid, a symlink, not a regular file, inside a
+  scanned root, or an existing file with more than one name (it could be a hard link to a scanned file).
+- **Database:** a new database is created 0600 in a 0700 directory, as for ingest; an existing file keeps its
+  mode (except an empty file, which becomes 0600). An older schema is migrated when opened. The roots are checked
+  again after the database is opened, immediately before the scan.
+- **What is read:** only the files the scanner recognises under the roots (CLAUDE.md, settings JSON, rules,
+  agents and skills), with the scanner's limits unchanged: no link followed out of a root, files over 1 MiB or
+  binary skipped, nothing executed, nothing enabled, no network, no model call. No labels are stored.
+- **Output:** aggregates only (counts by scope and category, skipped files by fixed code, import statuses, finding
+  counts by severity). No path, file name, setting value or file content is printed.
+- **Exit codes:** 0 complete scan saved (if standard output was closed, a `CONFIG SCAN RECORDED` notice goes to
+  standard error and the exit is still 0); 2 rejected before any work; 3 failed after work began, which includes
+  a **partial or failed scan** (a root became unavailable): it is recorded as history only, the current snapshot is
+  **not** replaced, and the message says so (`SCAN_INCOMPLETE`). Files the scanner skips (too large, binary,
+  unreadable) are normal in a complete scan and are counted by code.
+- **Limits:** the scan reads the roots as they are while it runs; a file changed during the scan is read as it is
+  at that moment. Detected is not loaded: nothing here shows that a file is active.
 
 ## Read-only API and dashboard (M4)
 

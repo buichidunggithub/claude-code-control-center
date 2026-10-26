@@ -13,7 +13,10 @@
     "start": "NEXT_TELEMETRY_DISABLED=1 next start -H 127.0.0.1 -p 3210",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "cli:build": "tsc -p tsconfig.cli.json",
+    "ingest": "tsc -p tsconfig.cli.json && node --no-warnings .cli-build/cli/main.js",
+    "config:scan": "tsc -p tsconfig.cli.json && node --no-warnings .cli-build/cli/config-main.js"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
