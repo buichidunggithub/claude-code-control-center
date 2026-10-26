@@ -33,3 +33,6 @@ tests/fixtures/real/
 .DS_Store
 .idea/
 .vscode/
+
+# compiled command-line tool (pnpm cli:build)
+.cli-build/
