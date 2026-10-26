@@ -1,10 +1,14 @@
-export default function HomePage() {
+import { OverviewView } from "@/components/dashboard/overview-view";
+import { Shell } from "@/components/dashboard/shell";
+import { getAnalysis } from "@/server/analysis";
+
+export const dynamic = "force-dynamic";
+
+export default function OverviewPage() {
+  const analysis = getAnalysis();
   return (
-    <main className="mx-auto max-w-3xl p-8">
-      <h1 className="text-2xl font-semibold">Claude Code Control Center</h1>
-      <p className="mt-2 text-sm opacity-70">
-        Scaffold only. No data sources are read yet.
-      </p>
-    </main>
+    <Shell active="overview" title="Overview">
+      <OverviewView status={analysis.status()} summary={analysis.usageSummary({ sidechain: "include" })} config={analysis.configSummary()} />
+    </Shell>
   );
 }
