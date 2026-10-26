@@ -62,9 +62,9 @@ function writeSnapshot(db: DatabaseSync, inventory: ConfigInventory, startedAt: 
     if (!isSafeEvidence(finding.evidence)) throw new ConfigStoreError("UNSAFE_EVIDENCE");
     run(
       db,
-      `INSERT INTO config_findings (scan_id, finding_key, rule_id, severity, confidence, file_id, related_file_id, evidence_json, limitations, recommendation)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      scanId, finding.key, finding.ruleId, finding.severity, finding.confidence,
+      `INSERT INTO config_findings (scan_id, finding_key, rule_id, rule_version, severity, confidence, file_id, related_file_id, evidence_json, limitations, recommendation)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      scanId, finding.key, finding.ruleId, finding.ruleVersion, finding.severity, finding.confidence,
       finding.sourceId === null ? null : (fileIds.get(finding.sourceId) ?? null),
       finding.relatedSourceId === null ? null : (fileIds.get(finding.relatedSourceId) ?? null),
       JSON.stringify(finding.evidence), finding.limitations, finding.recommendation,
@@ -99,7 +99,10 @@ export function saveConfigInventory(store: Store, inventory: ConfigInventory, op
 }
 
 export interface StoredFinding {
+  /** Stable finding key (a hash of rule and opaque item ids). Safe to expose. */
+  readonly key: string;
   readonly ruleId: string;
+  readonly ruleVersion: number;
   readonly severity: string;
   readonly confidence: string;
   readonly sourceId: string | null;
@@ -120,7 +123,9 @@ export function listConfigFindings(db: DatabaseSync): StoredFinding[] {
        LEFT JOIN config_files b ON b.id = f.related_file_id
       ORDER BY f.rule_id, f.finding_key`,
   ).map((r) => ({
+    key: str(r, "finding_key"),
     ruleId: str(r, "rule_id"),
+    ruleVersion: num(r, "rule_version"),
     severity: str(r, "severity"),
     confidence: str(r, "confidence"),
     sourceId: optStr(r, "src"),

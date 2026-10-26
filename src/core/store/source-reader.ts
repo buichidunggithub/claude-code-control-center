@@ -32,6 +32,11 @@ export type SourceInput = SourceScan | SourceFailure;
 export interface ReadSourceOptions {
   readonly label?: string;
   readonly maxLineBytes?: number;
+  /**
+   * Optional cap on the TOTAL bytes streamed. When the stream delivers more than this, reading stops at
+   * once (the stream is destroyed) and the source is reported as a read failure. Unset: no cap, as before.
+   */
+  readonly maxBytes?: number;
 }
 
 const NEWLINE = 0x0a;
@@ -48,6 +53,7 @@ async function* hashing(
   salt: Buffer,
   prefixSize: number | null,
   out: { digest?: Digest },
+  maxBytes: number | null = null,
 ): AsyncGenerator<Buffer> {
   const full = keyedHash(salt);
   let sizeBytes = 0;
@@ -66,6 +72,8 @@ async function* hashing(
       full.update(buf);
     }
     sizeBytes += buf.length;
+    // Throwing here ends the consuming loop, which destroys the underlying file stream: no further bytes are read.
+    if (maxBytes !== null && sizeBytes > maxBytes) throw new RangeError("source exceeds the byte limit");
     lastByte = buf[buf.length - 1] ?? lastByte;
     yield buf;
   }
@@ -117,7 +125,7 @@ export async function readSource(
 
     const out: { digest?: Digest } = {};
     const scan = await scanStream(
-      hashing(createReadStream(canonical), store.salt, prefixSize, out),
+      hashing(createReadStream(canonical), store.salt, prefixSize, out, options.maxBytes ?? null),
       options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES,
       0,
     );

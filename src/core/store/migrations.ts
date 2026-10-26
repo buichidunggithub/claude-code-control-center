@@ -188,9 +188,15 @@ CREATE INDEX idx_config_findings_scan ON config_findings(scan_id, rule_id);
 CREATE INDEX idx_config_imports_scan ON config_imports(scan_id);
 `;
 
+/** v3 records which version of a rule produced each finding. Additive: one column, existing rows get 1. */
+const V3 = `
+ALTER TABLE config_findings ADD COLUMN rule_version INTEGER NOT NULL DEFAULT 1 CHECK (rule_version >= 1);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "initial", sql: V1 },
   { version: 2, name: "config-inventory", sql: V2 },
+  { version: 3, name: "finding-rule-version", sql: V3 },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

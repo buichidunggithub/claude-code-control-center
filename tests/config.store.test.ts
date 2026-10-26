@@ -57,7 +57,7 @@ describe("saving and querying the inventory", () => {
     expect((store.db.prepare("SELECT COUNT(*) AS n FROM config_files").get() as { n: number }).n).toBe(inv.files.length);
     expect((store.db.prepare("SELECT COUNT(*) AS n FROM config_imports").get() as { n: number }).n).toBe(inv.imports.length);
     expect(listConfigFindings(store.db)).toEqual(
-      inv.findings.map((f) => ({ ruleId: f.ruleId, severity: f.severity, confidence: f.confidence, sourceId: f.sourceId, relatedSourceId: f.relatedSourceId, evidence: f.evidence, limitations: f.limitations, recommendation: f.recommendation })),
+      inv.findings.map((f) => ({ key: f.key, ruleId: f.ruleId, ruleVersion: f.ruleVersion, severity: f.severity, confidence: f.confidence, sourceId: f.sourceId, relatedSourceId: f.relatedSourceId, evidence: f.evidence, limitations: f.limitations, recommendation: f.recommendation })),
     );
     expect(configInventorySummary(store.db).reduce((n, r) => n + r.files, 0)).toBe(inv.files.length);
   });

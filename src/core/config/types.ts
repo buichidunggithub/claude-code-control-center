@@ -54,6 +54,8 @@ export interface Finding {
   /** Stable across scans of the same inventory (derived from rule, files and discriminator). */
   readonly key: string;
   readonly ruleId: string;
+  /** Version of the detection logic that produced this finding. */
+  readonly ruleVersion: number;
   readonly severity: Severity;
   readonly confidence: Confidence;
   readonly sourceId: string | null;

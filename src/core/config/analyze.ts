@@ -148,16 +148,21 @@ function conflictFindings(entries: readonly Entry[]): Finding[] {
   }
 
   const settings = entries.flatMap((e) => (e.settings?.valid ? [{ e, s: e.settings }] : []));
-  for (const { e, s } of settings) {
-    const overlap = [...s.allowHashes].filter((h) => s.denyHashes.has(h)).length;
-    if (overlap > 0) findings.push(makeFinding("CFG-CONF-002", { sourceId: e.record.sourceId, confidence: "high", evidence: { overlappingRules: overlap, sameFile: true } }));
-  }
-  for (const a of settings) {
-    for (const b of settings) {
-      if (a.e === b.e) continue;
-      const overlap = [...a.s.allowHashes].filter((h) => b.s.denyHashes.has(h)).length;
-      if (overlap > 0) findings.push(makeFinding("CFG-CONF-002", { sourceId: a.e.record.sourceId, relatedSourceId: b.e.record.sourceId, confidence: "medium", evidence: { overlappingRules: overlap, sameFile: false } }));
-    }
+  // The same rule text in two files is reported per file and per ordered pair, so the per-finding counts
+  // overlap. `distinctRules` is the number of distinct rule identities (in-memory hashes, never emitted)
+  // that sit in an allow list and a deny list anywhere in this scan; every CONF-002 finding carries it.
+  const overlaps = [
+    ...settings.map(({ e, s }) => ({ source: e, related: null, hashes: [...s.allowHashes].filter((h) => s.denyHashes.has(h)) })),
+    ...settings.flatMap((a) => settings.filter((b) => b.e !== a.e).map((b) => ({ source: a.e, related: b.e, hashes: [...a.s.allowHashes].filter((h) => b.s.denyHashes.has(h)) }))),
+  ].filter((o) => o.hashes.length > 0);
+  const distinctRules = new Set(overlaps.flatMap((o) => o.hashes)).size;
+  for (const o of overlaps) {
+    findings.push(makeFinding("CFG-CONF-002", {
+      sourceId: o.source.record.sourceId,
+      relatedSourceId: o.related?.record.sourceId ?? null,
+      confidence: o.related === null ? "high" : "medium",
+      evidence: { overlappingRules: o.hashes.length, sameFile: o.related === null, distinctRules },
+    }));
   }
 
   const hooks = groupBy(settings.flatMap(({ e, s }) => s.hookKeys.map((k) => ({ e, k }))), (x) => x.k);

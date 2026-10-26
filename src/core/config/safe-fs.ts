@@ -10,7 +10,11 @@ export type SkipCode =
   | "OUTSIDE_ROOTS"
   | "SYMLINK_LOOP"
   | "BINARY"
+  | "INVALID_ENCODING"
   | "READ_ERROR";
+
+/** Strict decoder: invalid UTF-8 is reported instead of silently replaced. A BOM is kept for the caller. */
+const UTF8_STRICT = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 export type SafeRead =
   | { readonly kind: "ok"; readonly text: string; readonly sizeBytes: number; readonly canonicalPath: string }
@@ -89,7 +93,11 @@ export async function readConfigFile(candidate: string, allowedRoots: readonly s
     if (bytesRead > maxBytes) return { kind: "skipped", code: "TOO_LARGE", sizeBytes: bytesRead, canonicalPath: real };
     const bytes = buffer.subarray(0, bytesRead);
     if (bytes.includes(0)) return { kind: "skipped", code: "BINARY", sizeBytes: bytesRead, canonicalPath: real };
-    return { kind: "ok", text: bytes.toString("utf8"), sizeBytes: bytesRead, canonicalPath: real };
+    try {
+      return { kind: "ok", text: UTF8_STRICT.decode(bytes), sizeBytes: bytesRead, canonicalPath: real };
+    } catch {
+      return { kind: "skipped", code: "INVALID_ENCODING", sizeBytes: bytesRead, canonicalPath: real };
+    }
   } catch (error) {
     return { kind: "skipped", code: codeOf(error), sizeBytes: 0, canonicalPath: real };
   } finally {
