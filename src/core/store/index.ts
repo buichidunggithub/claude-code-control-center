@@ -13,6 +13,7 @@ export {
 export { fingerprint, openStore, type Store } from "./database";
 export { IngestError, ingestSources, type IngestSummary, type SourceOutcome, type SourceReport } from "./ingest";
 export { LATEST_SCHEMA_VERSION, MIGRATIONS, SchemaVersionError, migrate } from "./migrations";
+export { CURRENT_FACTS_VERSION, recomputeToolDedup } from "./facts-store";
 export { defaultDatabasePath } from "./paths";
 export { scanAndIngest } from "./scan";
 export { readSource, type SourceInput, type SourceScan } from "./source-reader";

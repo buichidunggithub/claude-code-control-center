@@ -37,6 +37,11 @@ export interface ReadSourceOptions {
    * once (the stream is destroyed) and the source is reported as a read failure. Unset: no cap, as before.
    */
   readonly maxBytes?: number;
+  /**
+   * Opt-in, default false. Passed to the parse layer, which then reads user-event content in memory only to
+   * compute a coarse length bucket. Never inferred, so a normal ingest stores `not-read`.
+   */
+  readonly readPromptLength?: boolean;
 }
 
 const NEWLINE = 0x0a;
@@ -128,6 +133,7 @@ export async function readSource(
       hashing(createReadStream(canonical), store.salt, prefixSize, out, options.maxBytes ?? null),
       options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES,
       0,
+      { readPromptLength: options.readPromptLength === true },
     );
     const { digest } = out;
     if (!digest) return fail("READ_ERROR");

@@ -9,9 +9,11 @@ import {
   settledBySession,
   tokenFieldStateCounts,
 } from "@/core/store";
+import { TOOL_BUCKETS } from "@/core/parse";
 import { CANARIES, fixturePath } from "./helpers";
 import { findDatabaseFiles, freshStore, registerTempStoreCleanup, writeText } from "./store-helpers";
 import { readFileSync, readdirSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { vi } from "vitest";
 
@@ -151,9 +153,20 @@ describe("privacy of stored data and logs", () => {
 
     const dir = join(dbPath, "..");
     const bytes = readdirSync(dir).map((f) => readFileSync(join(dir, f)).toString("latin1")).join("\n");
-    const forbidden = [...CANARIES, "sess-A", "sess-R1", "msg_1", "msg_r1", "a-001", "toolu_", "Grep", "Bash", "weirdField", "mystery_counter", "usage-basic", "fixtures", process.cwd()];
+    // Allowlisted tool names ("Grep", "Bash", ...) are deliberately persisted since schema v4 (and spelled out in its
+    // CHECK constraint); tests/facts.store.test.ts proves that nothing outside that vocabulary is stored.
+    const forbidden = [...CANARIES, "sess-A", "sess-R1", "msg_1", "msg_r1", "a-001", "toolu_", "weirdField", "mystery_counter", "usage-basic", "fixtures", process.cwd()];
 
     for (const needle of forbidden) expect(bytes, needle).not.toContain(needle);
+    // Tool names are stored only as an allowlisted name or a generic bucket; nothing else may be present.
+    const raw = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const buckets = (raw.prepare("SELECT DISTINCT tool_bucket AS b FROM tool_calls").all() as { b: string }[]).map((r) => r.b);
+      expect(buckets.length).toBeGreaterThan(0);
+      expect(buckets.every((b) => (TOOL_BUCKETS as readonly string[]).includes(b))).toBe(true);
+    } finally {
+      raw.close();
+    }
     expect(bytes).toContain("model-alpha");
     for (const spy of logs) expect(spy).not.toHaveBeenCalled();
     vi.restoreAllMocks();

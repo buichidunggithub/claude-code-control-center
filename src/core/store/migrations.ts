@@ -193,10 +193,67 @@ const V3 = `
 ALTER TABLE config_findings ADD COLUMN rule_version INTEGER NOT NULL DEFAULT 1 CHECK (rule_version >= 1);
 `;
 
+/**
+ * v4 persists privacy-safe event facts, separately from usage accounting. Additive: one column and two tables,
+ * no change to any existing table's rows. Rows hold salted fingerprints, positions, timestamps and values from
+ * fixed vocabularies; never prompt text, exact lengths, tool names outside the allowlist, tool-use ids, tool
+ * arguments or results. The vocabularies below are deliberately spelled out here, not imported, so this
+ * historical migration cannot change when the code's allowlist does; widening one needs a new migration.
+ *
+ * - source_files.facts_version: 0 means the facts of that source were never collected (every source that
+ *   existed before v4); a positive value is the facts logic that produced its rows. A collected source with
+ *   no events has a positive version and no rows.
+ * - source_user_events: one row per source-typed "user" event. This models nothing about prompts or turns.
+ *   size_state is 'not-read' (opt-in off), 'unsupported' (read, not supported text) or a coarse bucket.
+ * - tool_calls: one row per tool_use block occurrence, duplicates included, so deduplication can be recomputed
+ *   across sources. (source_file_id, line_number, block_index) identifies an occurrence within ONE version of a
+ *   source and is the only identity of a call with no id. dedup is derived: for each tool_id_fp the occurrence
+ *   in the earliest (source fingerprint, line, block) is 'kept' and the rest are 'duplicate'; calls with no id
+ *   are always 'kept'.
+ * - session_fp is the same salted fingerprint the sessions table uses. It is stored directly, with no foreign
+ *   key, so facts can never change what the usage-side sessions table holds.
+ */
+const V4 = `
+ALTER TABLE source_files ADD COLUMN facts_version INTEGER NOT NULL DEFAULT 0 CHECK (facts_version >= 0);
+
+CREATE TABLE source_user_events (
+  id INTEGER PRIMARY KEY,
+  source_file_id INTEGER NOT NULL REFERENCES source_files(id) ON DELETE CASCADE,
+  line_number INTEGER NOT NULL CHECK (line_number >= 1),
+  session_fp TEXT,
+  ts TEXT,
+  day TEXT,
+  is_sidechain INTEGER CHECK (is_sidechain IN (0,1)),
+  size_state TEXT NOT NULL CHECK (size_state IN ('empty','xs','s','m','l','xl','unsupported','not-read')),
+  UNIQUE (source_file_id, line_number)
+) STRICT;
+
+CREATE TABLE tool_calls (
+  id INTEGER PRIMARY KEY,
+  source_file_id INTEGER NOT NULL REFERENCES source_files(id) ON DELETE CASCADE,
+  line_number INTEGER NOT NULL CHECK (line_number >= 1),
+  block_index INTEGER NOT NULL CHECK (block_index >= 0),
+  tool_id_fp TEXT,
+  tool_bucket TEXT NOT NULL CHECK (tool_bucket IN ('Read','Write','Edit','MultiEdit','NotebookEdit','Bash','Glob','Grep','WebFetch','WebSearch','Task','TodoWrite','other','unknown')),
+  session_fp TEXT,
+  ts TEXT,
+  day TEXT,
+  is_sidechain INTEGER CHECK (is_sidechain IN (0,1)),
+  dedup TEXT NOT NULL CHECK (dedup IN ('kept','duplicate')),
+  dedup_group_size INTEGER NOT NULL CHECK (dedup_group_size >= 1),
+  UNIQUE (source_file_id, line_number, block_index),
+  CHECK (tool_id_fp IS NOT NULL OR (dedup = 'kept' AND dedup_group_size = 1))
+) STRICT;
+
+CREATE INDEX idx_tool_calls_id_fp ON tool_calls(tool_id_fp) WHERE tool_id_fp IS NOT NULL;
+CREATE UNIQUE INDEX uq_tool_calls_kept_id ON tool_calls(tool_id_fp) WHERE tool_id_fp IS NOT NULL AND dedup = 'kept';
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "initial", sql: V1 },
   { version: 2, name: "config-inventory", sql: V2 },
   { version: 3, name: "finding-rule-version", sql: V3 },
+  { version: 4, name: "event-facts", sql: V4 },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

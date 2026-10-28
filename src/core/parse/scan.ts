@@ -8,6 +8,7 @@ import {
   type TokenFieldName,
   type ToolEvent,
   type UsageObservation,
+  type SourceUserEventFact,
 } from "./types";
 
 const UTF8_BOM = "﻿";
@@ -32,6 +33,7 @@ export interface ScanCounters {
 export interface ScanResult {
   readonly usage: readonly UsageObservation[];
   readonly tools: readonly ToolEvent[];
+  readonly userEvents: readonly SourceUserEventFact[];
   readonly counters: ScanCounters;
 }
 
@@ -82,9 +84,11 @@ export async function scanStream(
   source: ByteSource,
   maxLineBytes: number,
   sourceIndex: number,
+  options: { readonly readPromptLength?: boolean } = {},
 ): Promise<ScanResult> {
   const usage: UsageObservation[] = [];
   const tools: ToolEvent[] = [];
+  const userEvents: SourceUserEventFact[] = [];
   const c = { ...emptyCounters() } as { -readonly [K in keyof ScanCounters]: ScanCounters[K] };
   const eventsByType = { ...c.eventsByType };
   const issues = Object.fromEntries(TOKEN_FIELDS.map((f) => [f, { missing: 0, null: 0, invalid: 0 }])) as Record<
@@ -116,9 +120,14 @@ export async function scanStream(
       continue;
     }
 
-    const observation = normalizeEvent(value, { sourceIndex, lineNumber: line.lineNumber });
+    const observation = normalizeEvent(
+      value,
+      { sourceIndex, lineNumber: line.lineNumber },
+      { readPromptLength: options.readPromptLength === true },
+    );
     eventsByType[observation.eventType] += 1;
     tools.push(...observation.tools);
+    if (observation.userEvent !== null) userEvents.push(observation.userEvent);
     c.unrecognizedUsageKeyCount += observation.unrecognizedUsageKeyCount;
     if (observation.usageStatus === "absent") c.eventsWithoutUsage += 1;
     if (observation.usageStatus === "malformed") c.usageObjectsMalformed += 1;
@@ -135,5 +144,5 @@ export async function scanStream(
       if (kind !== "value") issues[field][kind] += 1;
     }
   }
-  return { usage, tools, counters: { ...c, eventsByType, tokenFieldIssues: issues } };
+  return { usage, tools, userEvents, counters: { ...c, eventsByType, tokenFieldIssues: issues } };
 }

@@ -1,3 +1,4 @@
+import { promptLengthBucket, toolNameBucket, type TextLengthState } from "./facts";
 import {
   TOKEN_FIELDS,
   type EventTypeBucket,
@@ -6,6 +7,7 @@ import {
   type ToolEvent,
   type SourcePosition,
   type UsageObservation,
+  type SourceUserEventFact,
 } from "./types";
 
 export type JsonRecord = Readonly<Record<string, unknown>>;
@@ -45,6 +47,12 @@ export interface EventObservation {
   readonly usage: UsageObservation | null;
   readonly unrecognizedUsageKeyCount: number;
   readonly tools: readonly ToolEvent[];
+  readonly userEvent: SourceUserEventFact | null;
+}
+
+export interface NormalizeOptions {
+  /** The only switch that lets `message.content` of a user event be read for length. Default false. */
+  readonly readPromptLength?: boolean;
 }
 
 export function isRecord(value: unknown): value is JsonRecord {
@@ -94,13 +102,20 @@ function readTools(
   context: Pick<ToolEvent, "sourceIndex" | "lineNumber" | "sessionId" | "timestamp" | "isSidechain">,
 ): ToolEvent[] {
   if (!Array.isArray(content)) return [];
-  return content
-    .filter((block): block is JsonRecord => isRecord(block) && own(block, "type") === "tool_use")
-    .map((block) => ({
-      toolUseId: readIdentifier(own(block, "id")),
-      toolName: readIdentifier(own(block, "name")),
-      ...context,
-    }));
+  // The index comes from the original array, so it is unaffected by which other blocks are recognized.
+  return content.flatMap((block, blockIndex): ToolEvent[] => {
+    if (!isRecord(block) || own(block, "type") !== "tool_use") return [];
+    const rawName = own(block, "name");
+    return [
+      {
+        blockIndex,
+        toolUseId: readIdentifier(own(block, "id")),
+        toolName: readIdentifier(rawName),
+        toolBucket: toolNameBucket(rawName),
+        ...context,
+      },
+    ];
+  });
 }
 
 function resolveIdentity(
@@ -114,8 +129,17 @@ function resolveIdentity(
   return { eventKey: null, identity: "none" };
 }
 
+/** The only place user content is read. Callers must have checked the opt-in. */
+function readTextLength(message: JsonRecord | null): TextLengthState {
+  return promptLengthBucket(message ? own(message, "content") : undefined) ?? "unsupported";
+}
+
 /** Pure classification of one parsed JSON object. Reads only explicitly recognized fields. */
-export function normalizeEvent(event: JsonRecord, position: SourcePosition): EventObservation {
+export function normalizeEvent(
+  event: JsonRecord,
+  position: SourcePosition,
+  options: NormalizeOptions = {},
+): EventObservation {
   const eventType = bucketEventType(own(event, "type"));
   const messageValue = own(event, "message");
   const message = isRecord(messageValue) ? messageValue : null;
@@ -132,12 +156,23 @@ export function normalizeEvent(event: JsonRecord, position: SourcePosition): Eve
     ...position,
   });
 
+  const userEvent: SourceUserEventFact | null =
+    eventType === "user"
+      ? {
+          ...position,
+          sessionId,
+          timestamp,
+          isSidechain,
+          textLength: options.readPromptLength === true ? readTextLength(message) : "not-read",
+        }
+      : null;
+
   const usageValue = message ? own(message, "usage") : undefined;
   if (usageValue === undefined) {
-    return { eventType, usageStatus: "absent", usage: null, unrecognizedUsageKeyCount: 0, tools };
+    return { eventType, usageStatus: "absent", usage: null, unrecognizedUsageKeyCount: 0, tools, userEvent };
   }
   if (!isRecord(usageValue)) {
-    return { eventType, usageStatus: "malformed", usage: null, unrecognizedUsageKeyCount: 0, tools };
+    return { eventType, usageStatus: "malformed", usage: null, unrecognizedUsageKeyCount: 0, tools, userEvent };
   }
 
   const tokens = Object.fromEntries(
@@ -160,5 +195,6 @@ export function normalizeEvent(event: JsonRecord, position: SourcePosition): Eve
     usage,
     unrecognizedUsageKeyCount: countUnrecognizedUsageKeys(usageValue),
     tools,
+    userEvent,
   };
 }

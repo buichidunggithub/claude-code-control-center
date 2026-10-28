@@ -27,6 +27,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { snapshotKey } from "../parse/accounting";
 import { TOKEN_FIELDS, type UsageObservation } from "../parse/types";
 import { fingerprint, type Store } from "./database";
+import { FactsWriteError, recomputeToolDedup, replaceSourceFacts, sourceFactsStale } from "./facts-store";
 import { TOKEN_COLUMN_PREFIX, recomputeAccounting } from "./reconcile";
 import type { SourceInput, SourceScan } from "./source-reader";
 import { all, inTransaction, num, one, run, sqliteErrorCode, str } from "./sql";
@@ -42,6 +43,8 @@ export interface SourceReport {
   readonly recordsRemoved: number;
   readonly recordsRetained: number;
   readonly anonymousIdentityUncertain: boolean;
+  /** Whether this scan replaced the source's event facts. Informational: it never affects usage rows. */
+  readonly factsRefreshed?: boolean;
 }
 
 export interface IngestSummary {
@@ -56,7 +59,11 @@ export interface IngestOptions {
 
 /** Carries only a code; the underlying error text is dropped because it may quote data. */
 export class IngestError extends Error {
-  constructor(readonly code: string) {
+  /** `facts`: the failure came from writing event facts. Either way the whole scan was rolled back. */
+  constructor(
+    readonly code: string,
+    readonly phase: "usage" | "facts" = "usage",
+  ) {
     super(`ingest failed (${code})`);
     this.name = "IngestError";
   }
@@ -71,12 +78,13 @@ interface PriorSource {
   readonly contentHash: string;
   readonly sizeBytes: number;
   readonly endedWithNewline: boolean;
+  readonly factsVersion: number;
 }
 
 function findPrior(db: DatabaseSync, sourceFingerprint: string): PriorSource | null {
   const row = one(
     db,
-    "SELECT id, content_hash, size_bytes, ended_with_newline FROM source_files WHERE fingerprint = ?",
+    "SELECT id, content_hash, size_bytes, ended_with_newline, facts_version FROM source_files WHERE fingerprint = ?",
     sourceFingerprint,
   );
   return row
@@ -85,6 +93,7 @@ function findPrior(db: DatabaseSync, sourceFingerprint: string): PriorSource | n
         contentHash: str(row, "content_hash"),
         sizeBytes: num(row, "size_bytes"),
         endedWithNewline: num(row, "ended_with_newline") === 1,
+        factsVersion: num(row, "facts_version"),
       }
     : null;
 }
@@ -170,6 +179,8 @@ interface WriteContext {
   readonly runId: number;
   readonly affected: Set<string>;
   readonly sessions: Map<string, number>;
+  /** Salted tool-use ids whose cross-source deduplication must be recomputed before the scan commits. */
+  readonly affectedToolIds: Set<string>;
 }
 
 function writeSource(ctx: WriteContext, src: SourceScan): SourceReport {
@@ -187,7 +198,10 @@ function writeSource(ctx: WriteContext, src: SourceScan): SourceReport {
 
   if (prior && prior.contentHash === src.contentHash) {
     run(db, "UPDATE source_files SET last_read_scan_id = ? WHERE id = ?", runId, prior.id);
-    return { sourceFingerprint: src.fingerprint, outcome: "unchanged", errorCode: null, recordsInserted: 0, recordsRemoved: 0, recordsRetained: observations.length, anonymousIdentityUncertain: false };
+    // Same usage bytes does not mean facts were collected: sources from before schema v4 never had them.
+    const refreshed = sourceFactsStale(db, prior, src.scan);
+    if (refreshed) replaceSourceFacts(store, ctx.affectedToolIds, prior.id, src.scan);
+    return { sourceFingerprint: src.fingerprint, outcome: "unchanged", errorCode: null, recordsInserted: 0, recordsRemoved: 0, recordsRetained: observations.length, anonymousIdentityUncertain: false, factsRefreshed: refreshed };
   }
 
   let sourceFileId: number;
@@ -224,6 +238,7 @@ function writeSource(ctx: WriteContext, src: SourceScan): SourceReport {
     );
   }
   for (const observation of observations) insertRecord(db, store, sessions, sourceFileId, observation);
+  replaceSourceFacts(store, ctx.affectedToolIds, sourceFileId, src.scan);
 
   return {
     sourceFingerprint: src.fingerprint,
@@ -233,6 +248,7 @@ function writeSource(ctx: WriteContext, src: SourceScan): SourceReport {
     recordsRemoved: removed,
     recordsRetained: retained,
     anonymousIdentityUncertain: outcome === "modified" && oldAnonymous + newAnonymous > 0,
+    factsRefreshed: true,
   };
 }
 
@@ -261,7 +277,7 @@ function insertSourceResult(db: DatabaseSync, runId: number, input: SourceInput,
 function writeScan(store: Store, inputs: readonly SourceInput[], startedAt: string, now: () => Date): IngestSummary {
   const db = store.db;
   const runId = run(db, "INSERT INTO scan_runs (started_at, status, sources_requested) VALUES (?, 'running', ?)", startedAt, inputs.length);
-  const ctx: WriteContext = { store, runId, affected: new Set(), sessions: new Map() };
+  const ctx: WriteContext = { store, runId, affected: new Set(), sessions: new Map(), affectedToolIds: new Set() };
 
   const reports = inputs.map((input): SourceReport => {
     const report: SourceReport =
@@ -273,6 +289,7 @@ function writeScan(store: Store, inputs: readonly SourceInput[], startedAt: stri
   });
 
   recomputeAccounting(db, ctx.affected);
+  recomputeToolDedup(db, ctx.affectedToolIds);
   run(db, "DELETE FROM sessions WHERE id NOT IN (SELECT session_id FROM usage_records WHERE session_id IS NOT NULL)");
 
   const count = (o: SourceOutcome) => reports.filter((r) => r.outcome === o).length;
@@ -299,12 +316,13 @@ export function ingestSources(store: Store, inputs: readonly SourceInput[], opti
   try {
     return inTransaction(store.db, () => writeScan(store, inputs, startedAt, now));
   } catch (error) {
-    const code = errorCodeOf(error);
+    const phase = error instanceof FactsWriteError ? "facts" : "usage";
+    const code = errorCodeOf(error instanceof FactsWriteError ? error.original : error);
     run(
       store.db,
       "INSERT INTO scan_runs (started_at, finished_at, status, error_code, sources_requested) VALUES (?, ?, 'failed', ?, ?)",
       startedAt, now().toISOString(), code, inputs.length,
     );
-    throw new IngestError(code);
+    throw new IngestError(code, phase);
   }
 }

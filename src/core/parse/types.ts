@@ -7,6 +7,8 @@
  * `content[]` blocks and a `usage` object with four token counters.
  */
 
+import type { TextLengthState, ToolBucket } from "./facts";
+
 export const TOKEN_FIELDS = [
   "inputTokens",
   "outputTokens",
@@ -77,11 +79,59 @@ export interface UsageRecord extends UsageObservation {
 
 /** A tool invocation observed in message content. Carries the tool name only, never arguments. */
 export interface ToolEvent extends SourcePosition {
+  /** Index of the block in the ORIGINAL `message.content` array, counting every block, recognized or not. */
+  readonly blockIndex: number;
   readonly toolUseId: string | null;
   readonly toolName: string | null;
+  /** Bucket of the RAW name (not of `toolName`, which is trimmed and capped). The only name-derived value safe to persist. */
+  readonly toolBucket: ToolBucket;
   readonly sessionId: string | null;
   readonly timestamp: string | null;
   readonly isSidechain: boolean | null;
+}
+
+/**
+ * An event whose source `type` is "user". Nothing more is claimed: it may be typed text, a tool-result carrier
+ * or something else, and whether any of these is a real prompt or turn is UNRESOLVED (the shapes are validated
+ * only against synthetic fixtures). It is produced for every such event and reads no content.
+ *
+ * `textLength` is an optional heuristic: `not-read` unless `ParseOptions.readPromptLength` is true, then a
+ * coarse bucket of supported text or `unsupported`. It must not be read as "prompt length".
+ */
+export interface SourceUserEventFact extends SourcePosition {
+  readonly sessionId: string | null;
+  readonly timestamp: string | null;
+  readonly isSidechain: boolean | null;
+  readonly textLength: TextLengthState;
+}
+
+/**
+ * A deduplicated tool call with its name reduced to a safe bucket. There is no name, argument or result field.
+ *
+ * Identity, by scope:
+ * - `(sourceIndex, lineNumber, blockIndex)` is unique and stable only for one version of one source. It is
+ *   what tells apart blocks that have no id, and it is NOT stable across a modified file: line numbers shift,
+ *   so anonymous calls must be recomputed on re-ingestion and never linked across versions.
+ *   After an append the earlier positions are unchanged; any other edit gives no link at all.
+ * - `toolUseId` is the opaque source id, meant to be salted-fingerprinted before persistence. When present
+ *   it deduplicates across events and sources within one parse call (first occurrence wins), so which
+ *   occurrence is kept depends on source order and must be recomputed when sources change.
+ * - A call with a null `toolUseId` is never deduplicated or merged.
+ */
+export interface ToolCallFact extends SourcePosition {
+  /** Index in the original `message.content` array (see `ToolEvent.blockIndex`). */
+  readonly blockIndex: number;
+  readonly toolUseId: string | null;
+  readonly toolBucket: ToolBucket;
+  readonly sessionId: string | null;
+  readonly timestamp: string | null;
+  readonly isSidechain: boolean | null;
+}
+
+/** Facts for future persistence. Independent of usage accounting: never read by it, never changes totals. */
+export interface ParseFacts {
+  readonly sourceUserEvents: readonly SourceUserEventFact[];
+  readonly toolCalls: readonly ToolCallFact[];
 }
 
 export interface TokenFieldIssues {
@@ -120,17 +170,28 @@ export interface ParseDiagnostics {
   readonly tokenFieldIssues: Readonly<Record<TokenFieldName, TokenFieldIssues>>;
   readonly toolEventsParsed: number;
   readonly toolEventsKept: number;
+  readonly promptLengthEnabled: boolean;
+  readonly sourceUserEventFacts: number;
+  /** Counts per text-length state. Every source-typed user event is `not-read` while the opt-in is off. */
+  readonly textLengthStates: Readonly<Record<TextLengthState, number>>;
+  readonly toolCallsByBucket: Readonly<Record<ToolBucket, number>>;
 }
 
 export interface ParseResult {
   readonly usageRecords: readonly UsageRecord[];
   readonly toolEvents: readonly ToolEvent[];
+  readonly facts: ParseFacts;
   readonly diagnostics: ParseDiagnostics;
 }
 
 export interface ParseOptions {
   /** Maximum raw bytes per line, excluding the "\n" terminator. */
   readonly maxLineBytes?: number;
+  /**
+   * Opt-in, default false. When false no user-event content is read and every `textLength` is `not-read`.
+   * When true, content is read in memory only to compute a coarse, heuristic length bucket.
+   */
+  readonly readPromptLength?: boolean;
 }
 
 export const DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024;
