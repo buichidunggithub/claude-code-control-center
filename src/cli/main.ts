@@ -1,5 +1,6 @@
 import { parseArgs } from "./args";
 import { CliError, REJECTIONS } from "./codes";
+import { HELP_TEXT } from "./help";
 import { emit, type Sink } from "./output";
 import { previewSource, renderPreview } from "./preview";
 
@@ -34,6 +35,10 @@ export async function main(argv: readonly string[], out: Sink = process.stdout, 
   let stage: Stage = "parse";
   try {
     const command = parseArgs(argv);
+    if (command.kind === "help") {
+      if (!(await emit(out, `${HELP_TEXT}\n`))) throw new CliError("OUTPUT_FAILED");
+      return 0;
+    }
     if (command.kind === "preview") {
       stage = "preview";
       const text = renderPreview(previewSource(command.path));
@@ -42,7 +47,7 @@ export async function main(argv: readonly string[], out: Sink = process.stdout, 
     }
     stage = "run";
     const { runIngest, renderRun } = await load();
-    const report = await runIngest({ sourcePath: command.path, dbPath: command.db, token: command.token });
+    const report = await runIngest({ sourcePath: command.path, dbPath: command.db, token: command.token, promptSize: command.promptSize === true });
 
     // From here on the ingest is committed.
     let summary: string | null = null;

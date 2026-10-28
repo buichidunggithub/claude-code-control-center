@@ -4,7 +4,7 @@
  * `exit` is 2 for rejected input (nothing was read or created) and 3 for a failure after work began.
  */
 export const REJECTIONS = {
-  USAGE: { exit: 2, hint: "Expected: ingest preview <absolute-path>   or   ingest run --db <absolute-db-path> --token <token> <absolute-path>." },
+  USAGE: { exit: 2, hint: "Expected: ingest preview <absolute-path>   or   ingest run --db <absolute-db-path> --token <token> [--prompt-size] <absolute-path>   or   ingest help." },
   INVALID_OPTION: { exit: 2, hint: "Unknown or unsupported option." },
   DUPLICATE_OPTION: { exit: 2, hint: "An option was given more than once." },
   PATH_LENGTH: { exit: 2, hint: "The path is empty or too long." },
@@ -35,6 +35,7 @@ export const REJECTIONS = {
   READ_FAILED: { exit: 3, hint: "The file could not be read. Nothing was ingested." },
   DB_UNUSABLE: { exit: 3, hint: "The database could not be created or opened. Nothing was ingested." },
   INGEST_FAILED: { exit: 3, hint: "The ingest failed and was rolled back. No usage records were written." },
+  FACTS_FAILED: { exit: 3, hint: "Writing the event facts failed and the whole run was rolled back. No usage records and no facts were changed by this run." },
   OUTPUT_FAILED: { exit: 3, hint: "The result could not be written to standard output (it may be closed)." },
   CONFIG_USAGE: { exit: 2, hint: "Expected: config-scan --db <absolute-db-path> [--user-root <absolute-dir>] [--project-root <absolute-dir>] (at least one root; each option at most once)." },
   ROOT_REQUIRED: { exit: 2, hint: "Name at least one root with --user-root or --project-root; nothing is searched for." },

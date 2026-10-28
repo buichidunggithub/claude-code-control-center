@@ -1,6 +1,7 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, type BigIntStats } from "node:fs";
 import { recognizeModelName } from "../core/recommend/model-name";
-import { accountingStateCounts, accountingSummary, ingestSources, openStore, readSource, scanDiagnostics, settledByModel, type Store } from "../core/store";
+import { all, num, one, str } from "../core/store/sql";
+import { IngestError, accountingStateCounts, accountingSummary, ingestSources, openStore, readSource, scanDiagnostics, settledByModel, type Store } from "../core/store";
 import { CliError } from "./codes";
 import { MAX_FILE_BYTES } from "./limits";
 import { inspectDbPath, inspectSource } from "./path-check";
@@ -10,6 +11,8 @@ export interface RunOptions {
   readonly sourcePath: string;
   readonly dbPath: string | null;
   readonly token: string | null;
+  /** Opt-in, default false: read user-event text in memory only to record a coarse size bucket. */
+  readonly promptSize?: boolean;
   /** Tests may lower the limit; the command line cannot. */
   readonly maxBytes?: number;
 }
@@ -24,6 +27,16 @@ export interface RunHooks {
   readonly afterRead?: () => void;
 }
 
+export interface FactsReport {
+  /** Whether this run replaced the file's facts. false: they were already current for this run's options. */
+  readonly refreshed: boolean;
+  readonly promptSizeRequested: boolean;
+  readonly userEvents: number;
+  readonly toolOccurrences: number;
+  /** Counts per size state, e.g. { "not-read": 4 }. Only states present are listed. */
+  readonly sizeStates: Readonly<Record<string, number>>;
+}
+
 export interface RunReport {
   readonly scanRunId: number;
   readonly status: string;
@@ -31,6 +44,8 @@ export interface RunReport {
   readonly recordsInserted: number;
   readonly recordsRemoved: number;
   readonly identityUncertain: boolean;
+  /** Event facts of THIS file after the run. Counts and fixed vocabulary only. Absent when it could not be read. */
+  readonly facts?: FactsReport | null;
   /** Database-wide figures after this ingest, not only this file's. */
   readonly database: {
     readonly states: Record<string, number>;
@@ -69,6 +84,23 @@ function assertUnchanged(fd: number, path: string, validated: BigIntStats, code:
   const opened = fstatSync(fd, { bigint: true });
   const named = lstatOrNull(path);
   if (!opened.isFile() || !sameFile(opened, validated) || named === null || !sameFile(named, opened)) throw new CliError(code, afterDbOpen);
+}
+
+/** Counts only, for one source, by its stored fingerprint (never shown). */
+function factsOf(store: Store, fingerprint: string | null, refreshed: boolean, promptSize: boolean): FactsReport | null {
+  if (fingerprint === null) return null;
+  try {
+    const sizeStates: Record<string, number> = {};
+    let userEvents = 0;
+    for (const row of all(store.db, "SELECT e.size_state AS s, COUNT(*) AS n FROM source_user_events e JOIN source_files f ON f.id = e.source_file_id WHERE f.fingerprint = ? GROUP BY e.size_state ORDER BY e.size_state", fingerprint)) {
+      sizeStates[str(row, "s")] = num(row, "n");
+      userEvents += num(row, "n");
+    }
+    const tools = one(store.db, "SELECT COUNT(*) AS n FROM tool_calls c JOIN source_files f ON f.id = c.source_file_id WHERE f.fingerprint = ?", fingerprint);
+    return { refreshed, promptSizeRequested: promptSize, userEvents, toolOccurrences: tools ? num(tools, "n") : 0, sizeStates };
+  } catch {
+    return null; // the ingest is already committed
+  }
 }
 
 function summarize(store: Store, scanRunId: number): Pick<RunReport, "database" | "skippedLines"> {
@@ -134,7 +166,7 @@ export async function runIngest(options: RunOptions, hooks: RunHooks = {}): Prom
       hooks.beforeRead?.();
       // The cap is the previewed size, which already passed the size limit: the stream stops at once if the file
       // grows past what was validated, instead of being read to its end.
-      const input = await readSource(store, path, { maxBytes: Number(validated.size) });
+      const input = await readSource(store, path, { maxBytes: Number(validated.size), readPromptLength: options.promptSize === true });
       hooks.afterRead?.();
       if (input.kind !== "ok") {
         assertUnchanged(fd, path, validated, "FILE_CHANGED_DURING_READ", true); // growth or replacement is reported as such
@@ -146,8 +178,8 @@ export async function runIngest(options: RunOptions, hooks: RunHooks = {}): Prom
       let result;
       try {
         result = await ingestSources(store, [input]);
-      } catch {
-        throw new CliError("INGEST_FAILED", true);
+      } catch (error) {
+        throw new CliError(error instanceof IngestError && error.phase === "facts" ? "FACTS_FAILED" : "INGEST_FAILED", true);
       }
       const source = result.sources[0];
       return {
@@ -157,6 +189,7 @@ export async function runIngest(options: RunOptions, hooks: RunHooks = {}): Prom
         recordsInserted: source?.recordsInserted ?? 0,
         recordsRemoved: source?.recordsRemoved ?? 0,
         identityUncertain: source?.anonymousIdentityUncertain ?? false,
+        facts: factsOf(store, source?.sourceFingerprint ?? null, source?.factsRefreshed === true, options.promptSize === true),
         ...summarize(store, result.scanRunId),
       };
     } finally {
@@ -174,6 +207,14 @@ export function renderRun(r: RunReport): string {
     `Scan run ........ #${r.scanRunId}, status ${r.status}`,
     `This file ....... ${r.outcome}; ${r.recordsInserted} records stored, ${r.recordsRemoved} replaced${r.identityUncertain ? "; anonymous identity is uncertain for this source" : ""}`,
   ];
+  if (r.facts) {
+    const f = r.facts;
+    const states = Object.entries(f.sizeStates).map(([k, v]) => `${k} ${v}`).join(", ");
+    lines.push(
+      `Event facts ..... ${f.refreshed ? "collected or replaced for this file" : "already current for this file; unchanged"}; ${f.userEvents} source-typed user events, ${f.toolOccurrences} tool_use blocks`,
+      `Text size ....... ${f.promptSizeRequested ? "requested (--prompt-size)" : "not requested (content not read)"}${states ? `; states: ${states}` : ""}`,
+    );
+  }
   if (r.skippedLines) lines.push(`Skipped lines ... malformed ${r.skippedLines.malformed}, non-object ${r.skippedLines.nonObject}, blank ${r.skippedLines.blank}, oversized ${r.skippedLines.oversized}, malformed usage objects ${r.skippedLines.usageObjectsMalformed}`);
   if (r.database) {
     const d = r.database;

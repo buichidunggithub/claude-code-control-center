@@ -2,7 +2,7 @@
 
 Local-first, **read-only** analyzer for Claude Code usage and configuration. macOS only (MVP).
 
-Status: M7.1. Synthetic-first parser and accounting (M1), SQLite store (M2), configuration inventory and static audit (M3), a read-only API and dashboard (M4), deterministic recommendations (M5), and an explicit one-file ingest command (M7.1). No discovery of real transcripts or configuration, no pricing.
+Status: M8.7. Synthetic-first parser and accounting (M1), SQLite store (M2), configuration inventory and static audit (M3), a read-only API and dashboard (M4), deterministic recommendations (M5), an explicit one-file ingest command (M7.1), and persisted event facts with a read-only analytics API and an Event facts page (M8). Everything is validated against synthetic fixtures only: the shape of real Claude Code transcripts has not been validated. No discovery of real transcripts or configuration, no pricing.
 
 ## Principles
 - Runs on `127.0.0.1` only; no LAN/public bind option.
@@ -61,8 +61,8 @@ depth is bounded.
 - **Assumed layouts** (rules, agents, skills, settings, CLAUDE.md, `@path` imports) follow documented
   conventions and are validated only against synthetic trees.
 
-Schema history: v1 usage accounting, v2 configuration inventory, v3 adds `config_findings.rule_version`
-(additive, transactional). Files that are not valid UTF-8 are skipped with the code `INVALID_ENCODING`.
+Schema history: v1 usage accounting, v2 configuration inventory, v3 adds `config_findings.rule_version`,
+v4 adds event facts (`source_files.facts_version`, `source_user_events`, `tool_calls`); all additive and transactional. Files that are not valid UTF-8 are skipped with the code `INVALID_ENCODING`.
 
 ## Ingesting a transcript (M7.1)
 
@@ -91,6 +91,14 @@ error codes only.
    being read), checks again that the handle and the name still match (identity, size, timestamps) and that
    the bytes read equal the previewed size, and only then runs the existing ingest (one transaction). The
    parser and accounting are the existing ones, unchanged.
+
+**Event facts and the optional size opt-in (M8.6).** Run `pnpm ingest help` for the full text. A source ingested
+before event facts existed has none collected; repeat the same `run` command for that one file to collect them.
+Usage records, sessions and token totals are left exactly as they are (only that file's facts are written, in the
+same single transaction, and a failure rolls everything back). Only files you name are touched; nothing is
+discovered or deleted. `--prompt-size` (off by default) additionally reads user-event text in memory only to record
+a coarse size bucket; without it the state is `not-read`. Text, excerpts, hashes and exact lengths are never
+stored, printed or logged. A source that already has buckets keeps them if you later run without the flag.
 
 **Failures.** Input rejected before any work (exit code 2): nothing was read and nothing was created. A failure
 after the database was opened (exit code 3: file changed during the read, database unusable, ingest rolled
@@ -181,7 +189,7 @@ pnpm config:scan --db /absolute/path/to/usage.db --user-root /absolute/path/to/c
 ## Read-only API and dashboard (M4)
 
 `pnpm dev` / `pnpm start` serve the dashboard on `127.0.0.1:3210`. Pages: Overview (`/`), Usage
-(`/usage`), Configuration audit (`/config`), Data quality (`/quality`), Run history (`/history`) and Source coverage (`/sources`). They are server-rendered
+(`/usage`), Configuration audit (`/config`), Event facts (`/analytics`), Data quality (`/quality`), Run history (`/history`) and Source coverage (`/sources`). They are server-rendered
 from the same operations as the API; nothing runs in the browser.
 
 - **Database location:** `CLAUDE_CONTROL_DB_PATH` (absolute) or the M2 default. It is opened with
@@ -221,6 +229,24 @@ from the same operations as the API; nothing runs in the browser.
     source results and so never appears here (see Run history).
   - Fixed codes only; a status, outcome, code or time that is not in the expected form fails closed. Read-only: no
     ingest, no migration, no database is created.
+- **Event facts (`/analytics`, `/api/analytics/summary`, `/trends`, `/tools`, `/sessions`, `/sessions/detail?id=`):**
+  GET-only, read-only counts over the persisted event facts, shown with the same envelope states as the other
+  endpoints plus a coverage block. Every payload is labelled `unverified-source-structure`: it is observed
+  structure that has not been validated against real transcripts.
+  - *What is counted:* events whose source type is `user` (not prompts or turns; no prompt, turn, retry, success or
+    productivity figure exists), and `tool_use` blocks by bucket (a fixed built-in name list; every other name is
+    `other`, a missing one `unknown`), as occurrences, kept calls (one per tool-use id, plus every call without an
+    id) and duplicates. Counts describe parsed structure, not that a tool ran or succeeded.
+  - *Size states:* `empty`/`xs`/`s`/`m`/`l`/`xl` are measured only when the ingest was run with `--prompt-size`;
+    `unsupported` means the content was read but is not supported text; `not-read` means it was never read. Neither
+    of the last two is a zero length.
+  - *Coverage:* figures cover only sources whose facts were collected. A database with sources but no facts shows
+    that state instead of zeros; partial coverage is labelled. Complete coverage means every stored source, not all
+    Claude Code activity. Facts are collected only by an explicit ingest of a named file (see "Ingesting a
+    transcript"); there is no directory-wide or automatic backfill.
+  - *Not included:* token figures. Facts are independent of the settled usage totals and never change them.
+  - Session references are the same short opaque prefixes as the usage sessions; parameters are `from`, `to`,
+    `limit`, `offset`, and `id` (16 hex) for the detail, validated like the other endpoints.
 - **Ordering and paging:** days are listed newest first, models alphabetically and sessions by opaque id
   (a page, not a top-N; the page says so). Page sizes are shown next to each table.
 - **Semantics:** totals reuse the store aggregates unchanged. Settled = accepted records only;
