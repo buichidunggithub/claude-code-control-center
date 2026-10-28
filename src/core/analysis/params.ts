@@ -14,13 +14,13 @@ export const SEVERITIES = ["info", "low", "medium", "high"] as const;
 
 export type ParamResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly parameter: string };
 
-type Source = Pick<URLSearchParams, "get" | "getAll" | "keys">;
+export type Source = Pick<URLSearchParams, "get" | "getAll" | "keys">;
 
-const fail = (parameter: string): { ok: false; parameter: string } => ({ ok: false, parameter });
-const good = <T,>(value: T): { ok: true; value: T } => ({ ok: true, value });
+export const fail = (parameter: string): { ok: false; parameter: string } => ({ ok: false, parameter });
+export const good = <T,>(value: T): { ok: true; value: T } => ({ ok: true, value });
 
 /** A single optional value (null when absent or empty); repeating the parameter is rejected rather than guessed. */
-function single(source: Source, name: string): string | null | undefined {
+export function single(source: Source, name: string): string | null | undefined {
   const values = source.getAll(name);
   if (values.length === 0) return null;
   if (values.length > 1) return undefined;
@@ -44,7 +44,7 @@ export function parseDay(raw: string): number | null {
 }
 
 /** Rejects unknown parameters so a typo never silently widens a query. */
-function onlyKnown(source: Source, known: readonly string[]): string | null {
+export function onlyKnown(source: Source, known: readonly string[]): string | null {
   for (const key of source.keys()) if (!known.includes(key)) return key.length <= 40 && /^\w+$/.test(key) ? key : "unknown";
   return null;
 }
@@ -54,7 +54,7 @@ export interface PageParams {
   readonly offset: number;
 }
 
-function pageParams(source: Source): ParamResult<PageParams> {
+export function pageParams(source: Source): ParamResult<PageParams> {
   const limit = integer(source, "limit", PAGE_LIMIT_DEFAULT, 1, PAGE_LIMIT_MAX);
   if (!limit.ok) return limit;
   const offset = integer(source, "offset", 0, 0, PAGE_OFFSET_MAX);
@@ -126,6 +126,17 @@ export function parseDayQuery(source: Source): ParamResult<DayQuery> {
   if (!sidechain.ok) return sidechain;
   const page = pageParams(source);
   if (!page.ok) return page;
+  const bounds = dayRange(source);
+  return bounds.ok ? good({ sidechain: sidechain.value, ...page.value, ...bounds.value }) : bounds;
+}
+
+export interface DayRange {
+  readonly from: string | null;
+  readonly to: string | null;
+}
+
+/** Optional inclusive `from`/`to` UTC days, at most MAX_RANGE_DAYS apart and in order. */
+export function dayRange(source: Source): ParamResult<DayRange> {
   const bounds: Record<"from" | "to", string | null> = { from: null, to: null };
   for (const name of ["from", "to"] as const) {
     const raw = single(source, name);
@@ -136,7 +147,7 @@ export function parseDayQuery(source: Source): ParamResult<DayQuery> {
     const span = ((parseDay(bounds.to) ?? 0) - (parseDay(bounds.from) ?? 0)) / MS_PER_DAY;
     if (span < 0 || span + 1 > MAX_RANGE_DAYS) return fail("to");
   }
-  return good({ sidechain: sidechain.value, ...page.value, ...bounds });
+  return good(bounds);
 }
 
 export function parseFindingsQuery(source: Source): ParamResult<FindingsQuery> {

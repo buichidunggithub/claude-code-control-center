@@ -29,7 +29,10 @@ import {
   type SettledGroup,
   type StoredFinding,
 } from "../store";
-import { SEVERITIES, type DayQuery, type FindingsQuery, type PagedSidechainQuery, type RecommendationsQuery, type RunDetailQuery, type RunsQuery, type SidechainQuery, type SourceDetailQuery, type SourcesQuery } from "./params";
+import { analyticsSessionDetail, analyticsSessions, analyticsSummary, analyticsTools, analyticsTrends } from "./analytics";
+import type { SessionDetailQuery, TrendsQuery } from "./analytics-params";
+import type { AnalyticsSessionDetail, AnalyticsSessions, AnalyticsSummary, AnalyticsTools, AnalyticsTrends } from "./analytics-types";
+import { SEVERITIES, type PageParams, type DayQuery, type FindingsQuery, type PagedSidechainQuery, type RecommendationsQuery, type RunDetailQuery, type RunsQuery, type SidechainQuery, type SourceDetailQuery, type SourcesQuery } from "./params";
 import { countBy } from "./counts";
 import { sourceCoverage, sourceDetail } from "./coverage";
 import { runDetail, runHistory } from "./history";
@@ -148,6 +151,11 @@ export interface Analysis {
   runDetail(q: RunDetailQuery): ApiEnvelope<RunDetailReport>;
   sourceCoverage(q: SourcesQuery): ApiEnvelope<SourceCoveragePage>;
   sourceDetail(q: SourceDetailQuery): ApiEnvelope<SourceDetailReport>;
+  analyticsSummary(): ApiEnvelope<AnalyticsSummary>;
+  analyticsTrends(q: TrendsQuery): ApiEnvelope<AnalyticsTrends>;
+  analyticsTools(): ApiEnvelope<AnalyticsTools>;
+  analyticsSessions(q: PageParams): ApiEnvelope<AnalyticsSessions>;
+  analyticsSessionDetail(q: SessionDetailQuery): ApiEnvelope<AnalyticsSessionDetail>;
 }
 
 const sumFieldStates = (counts: ReturnType<typeof tokenFieldStateCounts>, state: "invalid" | "missing"): number =>
@@ -318,6 +326,13 @@ export function createAnalysis(databasePath: string): Analysis {
     sourceCoverage: (q) => run("none", (db) => sourceCoverage(db, q)),
 
     sourceDetail: (q) => run("none", (db) => sourceDetail(db, q)),
+
+    // Event facts depend on a completed scan like usage does; "no facts collected" is a state inside the payload.
+    analyticsSummary: () => run("usage", analyticsSummary),
+    analyticsTrends: (q) => run("usage", (db) => analyticsTrends(db, q)),
+    analyticsTools: () => run("usage", analyticsTools),
+    analyticsSessions: (q) => run("usage", (db) => analyticsSessions(db, q)),
+    analyticsSessionDetail: (q) => run("usage", (db) => analyticsSessionDetail(db, q)),
 
     recommendations: (q) =>
       run("any", (db): RecommendationsPage => {
