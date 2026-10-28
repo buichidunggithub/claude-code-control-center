@@ -7,6 +7,7 @@ export const NAV = [
   { id: "usage", href: "/usage", label: "Usage" },
   { id: "config", href: "/config", label: "Configuration audit" },
   { id: "recommendations", href: "/recommendations", label: "Recommendations" },
+  { id: "analytics", href: "/analytics", label: "Event facts" },
   { id: "quality", href: "/quality", label: "Data quality" },
   { id: "history", href: "/history", label: "Run history" },
   { id: "sources", href: "/sources", label: "Source coverage" },
