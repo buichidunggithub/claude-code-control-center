@@ -9,6 +9,7 @@ import type {
   ApiEnvelope,
   FactsCoverage,
 } from "@/core/analysis";
+import { CoverageChart, SizeStatesChart } from "./analytics-charts";
 import { SessionDetailCard, SessionsCard } from "./analytics-sessions";
 import { SizeStateTable, UnverifiedWarning } from "./analytics-shared";
 import { ToolsCard, TrendsCard } from "./analytics-tables";
@@ -86,6 +87,9 @@ function CoverageCard({ summary }: { summary: AnalyticsSummary }) {
           <Stat label="Not collected" value={fmt(c.notCollected)} hint="Excluded from the figures; not zero." />
         </StatGrid>
       </div>
+      <div className="mt-3">
+        <CoverageChart coverage={c} />
+      </div>
       {c.outdated > 0 ? (
         <div className="mt-2">
           <Note>{fmt(c.outdated)} {c.outdated === 1 ? "source was" : "sources were"} collected by an older facts logic; naming them in a later ingest run refreshes them.</Note>
@@ -116,6 +120,9 @@ function UserEventsCard({ summary }: { summary: AnalyticsSummary }) {
       ) : null}
       <h3 className="mt-4 text-sm font-semibold">Text size states</h3>
       <div className="mt-2">
+        <SizeStatesChart counts={events.sizeStates} />
+      </div>
+      <div className="mt-3">
         <SizeStateTable counts={events.sizeStates} caption="User events by text size state" />
       </div>
       <div className="mt-2">

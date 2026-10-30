@@ -3,6 +3,7 @@ import type { ApiEnvelope, ConfigSummary, StatusReport, UsageQuality } from "@/c
 import { TOKEN_LABELS, TOKEN_ORDER, fmt } from "./format";
 import { Gate, Note } from "./notice";
 import { ScanLine } from "./overview-view";
+import { AccountingStatesChart } from "./usage-charts";
 import { Stat, StatGrid, TableWrap, Td, Th } from "./widgets";
 
 const STATE_HELP = {
@@ -41,6 +42,8 @@ export function QualityView({ status, quality, config }: QualityViewProps) {
         {(q) => (
           <>
             <Card title="Accounting states" description="Every stored usage record is in exactly one state. Only accepted records are settled.">
+              <AccountingStatesChart counts={q.stateCounts} />
+              <div className="mt-3" />
               <TableWrap caption="Usage records by accounting state">
                 <thead>
                   <tr>

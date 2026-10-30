@@ -64,7 +64,8 @@ describe("build and packaging", () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string>; dependencies: Record<string, string>; devDependencies: Record<string, string> };
     expect(pkg.scripts["cli:build"]).toBe("tsc -p tsconfig.cli.json");
     expect(pkg.scripts["ingest"]).toBe("tsc -p tsconfig.cli.json && node --no-warnings .cli-build/cli/main.js");
-    expect(Object.keys(pkg.dependencies).sort()).toEqual(["class-variance-authority", "clsx", "lucide-react", "next", "react", "react-dom", "tailwind-merge"]);
+    // recharts was added deliberately (charts on the dashboard); any other new runtime dependency still fails here.
+    expect(Object.keys(pkg.dependencies).sort()).toEqual(["class-variance-authority", "clsx", "lucide-react", "next", "react", "react-dom", "recharts", "tailwind-merge"]);
     expect(readFileSync(join(ROOT, ".gitignore"), "utf8")).toContain(".cli-build/");
     expect(readFileSync(join(ROOT, "eslint.config.mjs"), "utf8")).toContain(".cli-build/**");
   });

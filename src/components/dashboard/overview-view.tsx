@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/card";
 import type { ApiEnvelope, ConfigSummary, StatusReport, UsageSummary } from "@/core/analysis";
 import { COUNTER_COMPLETENESS, TOKEN_DISCLAIMER, TOKEN_LABELS, TOKEN_ORDER, fmt } from "./format";
 import { Gate, Note, StateNotice } from "./notice";
+import { TokenComposition } from "./usage-charts";
 import { Stat, StatGrid, TableWrap, Td, Th } from "./widgets";
 
 const SCAN_TONE: Readonly<Record<string, BadgeTone>> = { complete: "good", partial: "warn", failed: "bad", running: "neutral" };
@@ -35,6 +36,9 @@ function Totals({ summary }: { summary: UsageSummary }) {
             <Stat key={f} label={`${TOKEN_LABELS[f]} tokens`} value={fmt(settled[f])} />
           ))}
         </StatGrid>
+        <div className="mt-4">
+          <TokenComposition settled={settled} />
+        </div>
         <div className="mt-2">
           <Note>{TOKEN_DISCLAIMER}</Note>
           <div className="mt-1">

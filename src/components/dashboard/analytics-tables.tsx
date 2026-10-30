@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/card";
 import type { AnalyticsTools, AnalyticsTrends, DayFacts, FactsSlice } from "@/core/analysis";
 import { TEXT_LENGTH_STATES } from "@/core/parse";
+import { DailyToolCallsChart, DailyUserEventsChart, ToolBucketsChart } from "./analytics-charts";
 import { OffsetPager, ShareBar, UnverifiedHint } from "./analytics-shared";
 import { fmt } from "./format";
 import { Note } from "./notice";
@@ -26,6 +27,9 @@ export function ToolsCard({ toolCalls }: { toolCalls: ToolCalls }) {
         <Stat label="Duplicates" value={fmt(toolCalls.duplicates)} hint="Repeats of an id already kept. Not an error or quality measure." />
         <Stat label="Anonymous" value={fmt(toolCalls.anonymous)} hint="No id recorded. Never merged; counted inside Kept." />
       </StatGrid>
+      <div className="mt-4">
+        <ToolBucketsChart toolCalls={toolCalls} />
+      </div>
       <div className="mt-4">
         <TableWrap caption="Tool calls by bucket, in the API's fixed order">
           <thead>
@@ -116,6 +120,12 @@ export function TrendsCard({ trends, base, session }: TrendsCardProps) {
         </label>
         <button type="submit" className="rounded border border-neutral-500 px-3 py-1">Apply</button>
       </form>
+      {trends.items.length === 0 ? null : (
+        <div className="mb-4 grid gap-4 lg:grid-cols-2">
+          <DailyUserEventsChart days={trends.items} />
+          <DailyToolCallsChart days={trends.items} />
+        </div>
+      )}
       {trends.items.length === 0 ? (
         <p className="text-sm">{rangeActive ? "No day with recorded facts falls in this range." : "No day with recorded facts."}</p>
       ) : (

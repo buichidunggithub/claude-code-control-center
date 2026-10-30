@@ -4,6 +4,7 @@ import { UNRECOGNIZED_MODEL_LABEL } from "@/core/recommend";
 import { PAGE_LIMIT_DEFAULT, type ApiEnvelope, type DayBreakdown, type ModelBreakdown, type SessionBreakdown, type SidechainMode } from "@/core/analysis";
 import { TOKEN_DISCLAIMER, fmt } from "./format";
 import { Gate, Note } from "./notice";
+import { TokensByDay, TokensByModel } from "./usage-charts";
 import { Pager, TableWrap, Td, Th, TokenRows, hrefWith } from "./widgets";
 
 export interface UsageViewProps {
@@ -69,6 +70,8 @@ export function UsageView({ sidechain, from, to, models, days, sessions, usageSc
               <p className="text-sm">No settled records.</p>
             ) : (
               <>
+                <TokensByModel items={d.items} />
+                <div className="mt-3" />
                 <TokenRows caption="Settled tokens by model" keyLabel="Model" rows={d.items.map((i) => ({ ...i, key: i.key ?? NO_MODEL }))} />
                 <PageNote shown={d.items.length} total={d.total} unit="models" order="alphabetical by model name" />
                 {d.items.some((i) => i.key === UNRECOGNIZED_MODEL_LABEL) ? (
@@ -88,6 +91,8 @@ export function UsageView({ sidechain, from, to, models, days, sessions, usageSc
         <Gate envelope={days} section="usage">
           {(d) => (
             <>
+              {d.items.length === 0 ? null : <TokensByDay items={d.items} />}
+              {d.items.length === 0 ? null : <div className="mt-3" />}
               {d.items.length === 0 ? <p className="text-sm">No settled records in this range.</p> : <TokenRows caption="Settled tokens by UTC day" keyLabel="Day (UTC)" rows={d.items.map((i) => ({ ...i, key: i.key ?? "" }))} />}
               <Pager path="/usage" base={{ ...base, limit: d.limit === PAGE_LIMIT_DEFAULT ? null : String(d.limit) }} limit={d.limit} offset={d.offset} total={d.total} />
               {d.items.length === 0 ? null : (

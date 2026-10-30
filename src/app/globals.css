@@ -4,12 +4,36 @@
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
+
+  /* Chart tokens. Series hues are the validated categorical slots 1-4 of the data-viz palette (checked for color-vision separation
+     and lightness on both surfaces); the rest is chart chrome. Light and dark values are chosen separately. */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-muted-series: #898781;
+  --chart-surface: #fcfcfb;
+  --chart-grid: #e1e0d9;
+  --chart-axis: #c3c2b7;
+  --chart-text-muted: #6b6963;
+  --chart-text: #0b0b0b;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
+
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-4: #c98500;
+    --chart-muted-series: #898781;
+    --chart-surface: #1a1a19;
+    --chart-grid: #2c2c2a;
+    --chart-axis: #383835;
+    --chart-text-muted: #a9a79f;
+    --chart-text: #f0efec;
   }
 }
 
