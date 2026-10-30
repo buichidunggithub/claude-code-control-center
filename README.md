@@ -1,8 +1,72 @@
 # Claude Code Control Center
 
-Local-first, **read-only** analyzer for Claude Code usage and configuration. macOS only (MVP).
+A local, **read-only** dashboard for your Claude Code usage and configuration. It shows where tokens go (by day
+and by model), flags oversized or broken configuration files (`CLAUDE.md`, rules, agents), and reports how
+trustworthy its own numbers are. It runs on `127.0.0.1` only, sends nothing anywhere, and never stores your
+prompts or tool arguments.
 
-Status: M8.7. Synthetic-first parser and accounting (M1), SQLite store (M2), configuration inventory and static audit (M3), a read-only API and dashboard (M4), deterministic recommendations (M5), an explicit one-file ingest command (M7.1), and persisted event facts with a read-only analytics API and an Event facts page (M8). Everything is validated against synthetic fixtures only: the shape of real Claude Code transcripts has not been validated. No discovery of real transcripts or configuration, no pricing.
+> **Status: alpha.** Everything has been tested against synthetic fixtures only. The shape of real Claude Code
+> transcripts has **not** been validated, so figures from your own data may be incomplete or wrong until it is.
+> Please treat the numbers as a rough guide, not as billing or measurement.
+
+## What it does
+
+- **Token usage** from a transcript you choose: settled totals, token by UTC day and by model, and a clear
+  separation of records it could not settle (conflicting or ambiguous) instead of guessing.
+- **Configuration audit:** inventory of the Claude config files you point it at, estimated size, and static
+  findings such as a broken `@import`, with suggestions for you to review.
+- **Data quality:** how many records were accepted, skipped or invalid, so you know how far to trust the totals.
+- **Event facts (experimental):** counts of event and tool-call *structure*, always labelled as unverified.
+- **Charts** with a matching table for every figure, in light and dark mode.
+
+## What it does not do
+
+- It does not measure productivity, prompts, turns, retries, task success or tool success.
+- It does not show cost: no pricing is applied, and totals can be lower than Claude Code's own counters.
+- It does not search for your files. You name each transcript and configuration directory yourself.
+- It does not change anything: no ingest, scan or migration runs from the dashboard.
+
+## Screenshots
+
+All screenshots show **synthetic demo data**, not real usage.
+
+**Usage:** settled tokens by model and by UTC day, with the matching table under each chart.
+
+![Usage page: tokens by model and by day](docs/images/usage.png)
+
+**Event facts (experimental):** coverage comes first, then the unverified-structure warning and the text size
+states; `not-read` and `unsupported` are never shown as a zero length.
+
+![Event facts page: coverage, warning and size states](docs/images/event-facts.png)
+
+**Overview:** latest scans and the settled totals.
+
+![Overview page: latest scans and settled totals](docs/images/overview.png)
+
+## Requirements
+
+- **macOS** (the default data location is under Application Support; other systems are not supported yet).
+- **Node.js 24 or newer** (it uses the built-in `node:sqlite`) and **pnpm**.
+
+## Quick start
+
+```
+pnpm install
+pnpm build
+pnpm ingest preview /absolute/path/to/session.jsonl            # prints a confirmation token
+pnpm ingest run --db /absolute/path/usage.db --token <token> /absolute/path/to/session.jsonl
+CLAUDE_CONTROL_DB_PATH=/absolute/path/usage.db pnpm start      # open http://127.0.0.1:3210
+```
+
+Repeat the `run` step for each transcript you want included. Add `pnpm config:scan` for the configuration audit.
+New to the pages and numbers? Read [Using the dashboard](#using-the-dashboard-what-to-look-at-and-how-to-read-it)
+below; a Vietnamese guide is in [`docs/HUONG_DAN_SU_DUNG.md`](docs/HUONG_DAN_SU_DUNG.md).
+
+## License
+
+[MIT](LICENSE).
+
+The sections below are the detailed reference and development notes.
 
 ## Principles
 - Runs on `127.0.0.1` only; no LAN/public bind option.
@@ -15,6 +79,7 @@ Status: M8.7. Synthetic-first parser and accounting (M1), SQLite store (M2), con
 ```
 pnpm install
 pnpm dev        # http://127.0.0.1:3210
+pnpm build && pnpm start   # production build; set CLAUDE_CONTROL_DB_PATH to your database
 pnpm lint
 pnpm typecheck
 pnpm test
@@ -24,7 +89,7 @@ pnpm config:scan --db <abs-db> --user-root <abs-dir> --project-root <abs-dir>   
 
 The loopback test checks configuration (scripts and constants). It does not prove runtime network isolation.
 
-## Local store (M2)
+## Local store
 
 Usage accounting is persisted with the built-in `node:sqlite` (no native dependency) at
 `~/Library/Application Support/claude-code-control-center/usage.db` (directory `0700`, file `0600`).
@@ -42,7 +107,7 @@ states. No prompts, responses, tool arguments, file paths or env values.
   anonymous rows; sessions replayed under fresh message ids are not recognized. Fingerprints are salted
   but not anonymization: the salt lives in the same database file.
 
-## Configuration inventory (M3)
+## Configuration inventory
 
 `scanConfig(roots, { salt })` (in `src/core/config`) is a read-only static audit of explicitly supplied
 roots: a `user-config` root (the user's Claude config directory) and/or `project` roots. It never
@@ -64,7 +129,7 @@ depth is bounded.
 Schema history: v1 usage accounting, v2 configuration inventory, v3 adds `config_findings.rule_version`,
 v4 adds event facts (`source_files.facts_version`, `source_user_events`, `tool_calls`); all additive and transactional. Files that are not valid UTF-8 are skipped with the code `INVALID_ENCODING`.
 
-## Ingesting a transcript (M7.1)
+## Ingesting a transcript
 
 Usage data enters the database only through one explicit, two-step command. It handles exactly one `.jsonl`
 file per run and never discovers anything.
@@ -92,7 +157,7 @@ error codes only.
    the bytes read equal the previewed size, and only then runs the existing ingest (one transaction). The
    parser and accounting are the existing ones, unchanged.
 
-**Event facts and the optional size opt-in (M8.6).** Run `pnpm ingest help` for the full text. A source ingested
+**Event facts and the optional size opt-in.** Run `pnpm ingest help` for the full text. A source ingested
 before event facts existed has none collected; repeat the same `run` command for that one file to collect them.
 Usage records, sessions and token totals are left exactly as they are (only that file's facts are written, in the
 same single transaction, and a failure rolls everything back). Only files you name are touched; nothing is
@@ -150,7 +215,7 @@ directory, glob or discovery mode, no ingest from the dashboard (configuration h
 `http://127.0.0.1:3210`. Token totals are the usage records found in the ingested transcript and accepted by the
 accounting pipeline; they may be incomplete (see "What the token totals mean" below).
 
-## Scanning configuration (M7.4)
+## Scanning configuration
 
 ```
 pnpm config:scan --db /absolute/path/to/usage.db --user-root /absolute/path/to/claude-config-dir --project-root /absolute/path/to/project
@@ -186,13 +251,124 @@ pnpm config:scan --db /absolute/path/to/usage.db --user-root /absolute/path/to/c
 - **Limits:** the scan reads the roots as they are while it runs; a file changed during the scan is read as it is
   at that moment. Detected is not loaded: nothing here shows that a file is active.
 
-## Read-only API and dashboard (M4)
+## Using the dashboard: what to look at and how to read it
+
+A practical guide to the pages, the figures on them and what each figure does and does not mean. (A Vietnamese
+version of the workflow is in `docs/HUONG_DAN_SU_DUNG.md`.) The dashboard only reads a database you filled
+yourself; the repository's tests and any demo data are synthetic, so their numbers mean nothing.
+
+### Step by step
+
+```
+pnpm install
+pnpm build
+pnpm ingest preview /absolute/path/to/session.jsonl                      # prints a token
+pnpm ingest run --db /absolute/path/usage.db --token <token> /absolute/path/to/session.jsonl
+pnpm config:scan --db /absolute/path/usage.db --user-root <dir> --project-root <dir>   # optional
+CLAUDE_CONTROL_DB_PATH=/absolute/path/usage.db pnpm start               # http://127.0.0.1:3210
+```
+
+Repeat `ingest run` for each file you want included (one file per run). Use a database path that is not inside
+a directory you scan. Nothing is discovered automatically.
+
+### Which pages are worth your time
+
+| Priority | Page | Use it to | Trust level |
+|---|---|---|---|
+| 1 | **Data quality** (`/quality`) | check that the data is clean, once after each ingest | high (counts of what was parsed) |
+| 2 | **Overview** (`/`) | see the settled totals and how much is unresolved | high for settled, partial for the rest |
+| 3 | **Usage** (`/usage`) | see token use by day and by model | good for relative comparison |
+| 4 | **Configuration audit** (`/config`) and **Recommendations** | find oversized or broken configuration files | static analysis only |
+| 5 | **Event facts** (`/analytics`) | see the structure of events and tool calls | low: unverified structure |
+| - | **Run history**, **Source coverage** | confirm an ingest worked and which files the database has seen | bookkeeping, not usage |
+
+Suggested first pass on real data: Data quality, then Overview, then Usage, then Configuration audit.
+
+### Reading the token figures (Overview, Usage)
+
+- **Settled records / tokens** count only *accepted* usage records: records with a reliable identity and no
+  competing counters. This is the one figure that is settled.
+- **Input** is new, uncached input. **Output** is what the model wrote. **Cache read** is context re-read from
+  the cache; it is usually the largest number and that is normal, not waste. **Cache creation** is context
+  written to the cache the first time.
+- Use the figures to compare days or models with each other. They are not billing totals, not exact API cost
+  (no pricing is applied) and can be lower than Claude Code's own cumulative counters, because transcripts may
+  not record every API call.
+- **Unresolved (Overview):** *Conflicting groups* are records with the same identity but different counters;
+  *Ambiguous records* have no reliable identity; *Duplicates excluded* are identical repeats of an accepted
+  record. None of these is added to the settled totals; conflicting and ambiguous usage is shown as a range or
+  under both interpretations. If these are large compared with the settled records, treat the totals as
+  incomplete.
+- **Usage page:** days are UTC; the From/To filter applies to the day table and chart only; the sidechain toggle
+  (sub-agent events) applies to all three tables. A day with no settled records is not drawn and is not a zero.
+  The session table is a page ordered by opaque id, not a top-N.
+
+### Reading Data quality
+
+- **Accounting states:** every stored record is `accepted`, `duplicate`, `conflicting` or `ambiguous`. A low share
+  of `accepted` means the Usage totals deserve less trust.
+- **Counter states:** per token counter, how many records have a valid `value` versus `missing`, `null` or
+  `invalid`. A settled record is still counted when one counter is not valid; that counter then adds nothing to
+  its own total.
+- **Latest scan diagnostics:** skipped lines (malformed, non-object, blank, oversized), events without usage,
+  unusable timestamps and identity-uncertain sources. These describe the latest scan only.
+
+### Reading Configuration audit and Recommendations
+
+- **Inventory** counts files by scope (user/project) and category (CLAUDE.md, rule, agent, skill, settings),
+  with estimated tokens (bytes / 4, a rough size and not tokenizer output). Large files can enlarge the context
+  of every session. Present on disk does not mean loaded: activation is always unverified.
+- **Findings** are static checks (for example a broken `@import`), with severity, confidence, limits and a
+  suggested action. **Recommendations** are suggestions for a person to review; nothing is applied and no saving
+  is claimed. *Rules evaluated* shows which rules fired, did not trigger, or lacked evidence.
+
+### Reading Event facts (unverified)
+
+Every figure on this page describes **observed source structure that has not been validated against real
+transcripts**. The page and the API say so (`validation: "unverified-source-structure"`).
+
+- **Facts coverage (read first):** how many stored sources have facts. *Facts not collected* means no figures are
+  shown (never zeros); *Partial coverage* means every figure covers only the collected sources; *Complete* means
+  every stored source, not all Claude Code activity. Facts are collected by running `ingest run` again for a file.
+- **User events:** events whose source type is `user`. This is not a count of prompts or turns, and no retry,
+  success or productivity figure exists. Split into main, sidechain and sidechain-unknown.
+- **Text size states:** `empty`/`xs`/`s`/`m`/`l`/`xl` are measured only when you ingested with `--prompt-size`
+  (1-50, 51-200, 201-1000, 1001-5000, over 5000 characters). `unsupported` means the content was read but is not
+  supported text; `not-read` means it was never read (the default). Neither of those two is a zero length.
+- **Tool calls:** `tool_use` blocks by bucket (a fixed list of built-in names; every other name, including
+  `mcp__*`, is `other`; a missing name is `unknown`). *Occurrences* counts every block; *Kept* is one per
+  tool-use id plus every call with no id; *Duplicates* are repeats of an id; *Anonymous* calls have no id and are
+  never merged. They count parsed structure and do not show that a tool ran or succeeded; duplicates are not an
+  error measure.
+- **Daily facts** (UTC, with an *undated* slice for facts without a usable timestamp) and **Sessions** (short
+  opaque references, 50 per page; the reference is not a Claude session id and identifies no user, device or
+  project).
+
+### Charts
+
+Charts use Recharts and always sit above the table with the same figures (the table is the accessible
+equivalent). Hover or focus a bar for a tooltip. Colors follow the entity: each token counter keeps one color on
+every chart; `not-read` and `unsupported` have their own colors so they cannot be mistaken for a zero length;
+buckets with no occurrences are left out of the tool chart (the table lists them all); a missing day is never
+drawn as zero. Light and dark follow the operating system.
+
+### Messages you may see
+
+| Message | Meaning | What to do |
+|---|---|---|
+| No database yet | The file does not exist; nothing was created | Run `ingest run` or set `CLAUDE_CONTROL_DB_PATH` |
+| No completed usage scan | The database has no completed scan | Ingest a file |
+| `SCHEMA_OUTDATED` | The database is older than this version | Run `ingest run --db <db> ...` once; the dashboard never migrates |
+| Facts not collected | Sources exist without event facts | Run `ingest run` again for each file |
+| `QUERY_FAILED` | A query failed | Only a fixed code is shown, never details |
+
+## Read-only API and dashboard
 
 `pnpm dev` / `pnpm start` serve the dashboard on `127.0.0.1:3210`. Pages: Overview (`/`), Usage
 (`/usage`), Configuration audit (`/config`), Event facts (`/analytics`), Data quality (`/quality`), Run history (`/history`) and Source coverage (`/sources`). They are server-rendered
 from the same operations as the API; nothing runs in the browser.
 
-- **Database location:** `CLAUDE_CONTROL_DB_PATH` (absolute) or the M2 default. It is opened with
+- **Database location:** `CLAUDE_CONTROL_DB_PATH` (absolute) or the default location above (`~/Library/Application Support/claude-code-control-center/usage.db`). It is opened with
   `readOnly`; the dashboard never creates, migrates or writes it. A missing file shows an empty state
   and creates nothing. Create and fill it explicitly: usage with `pnpm ingest` (see "Ingesting a transcript"),
   configuration with `pnpm config:scan` (see "Scanning configuration"). A database that needs migrating is reported as `SCHEMA_OUTDATED`.
@@ -269,7 +445,7 @@ from the same operations as the API; nothing runs in the browser.
   rule metadata. Finding evidence is re-validated on read and withheld if unsafe; an unknown accounting
   state fails closed instead of being echoed.
 
-### Host validation (M4-R2)
+### Host validation
 
 `src/proxy.ts` (Next.js 16's renamed middleware) runs before every request, including pages, API routes and
 static assets, and answers `403 Forbidden` (empty of detail) unless the `Host` header is exactly
@@ -297,7 +473,7 @@ database. `tests/next.runtime.test.ts` runs `next build` and starts `next start`
 against such a database; it needs a few seconds and a writable `.next` (do not run it while `pnpm dev` is
 using the same directory).
 
-## Recommendations (M5)
+## Recommendations
 
 `/recommendations` and `GET /api/recommendations?category=&priority=&limit=&offset=` list deterministic,
 explainable suggestions for **human review**. They are derived at read time from the current audit findings

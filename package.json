@@ -2,6 +2,7 @@
   "name": "agent-control",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Local-first, read-only Claude Code usage analyzer",
   "packageManager": "pnpm@9.15.0",
   "engines": {
